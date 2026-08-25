@@ -6,7 +6,7 @@ use tracing::debug;
 
 use uv_distribution_filename::{BuildTag, WheelFilename};
 use uv_distribution_types::{
-    File, InstalledDist, MinimumLibcVersion, Name, RegistryBuiltDist, RegistryBuiltWheel,
+    InstalledDist, MinimumLibcVersion, Name, RegistryBuiltDist, RegistryBuiltWheel, RegistryFile,
     RegistrySourceDist, RequiresPython,
 };
 use uv_normalize::PackageName;
@@ -606,7 +606,7 @@ impl PrioritizedDist {
     }
 
     /// Returns an iterator of all wheels and the source distribution, if any.
-    pub(crate) fn files(&self) -> impl Iterator<Item = &File> {
+    pub(crate) fn files(&self) -> impl Iterator<Item = &RegistryFile> {
         self.0
             .wheels
             .iter()
