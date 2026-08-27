@@ -4018,6 +4018,7 @@ fn preview_features() {
     +            MinimumLibcVersion,
     +            BuildDependencyCheck,
     +            BuildLazyImports,
+    +            ProxyIndex,
     +        ],
          },
          python_preference: Managed,
