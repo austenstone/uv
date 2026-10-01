@@ -6193,7 +6193,11 @@ name = "uv-build-frontend"
 version = "0.0.92"
 dependencies = [
  "anstream",
+ "anyhow",
+ "astral-tokio-tar",
+ "async-compression",
  "fs-err",
+ "futures",
  "indoc",
  "insta",
  "itertools 0.14.0",
@@ -6212,9 +6216,11 @@ dependencies = [
  "uv-cache-key",
  "uv-configuration",
  "uv-distribution",
+ "uv-distribution-filename",
  "uv-distribution-types",
  "uv-errors",
  "uv-fs",
+ "uv-lock",
  "uv-normalize",
  "uv-pep440",
  "uv-pep508",
