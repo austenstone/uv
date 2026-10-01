@@ -66,6 +66,10 @@ fn each_element_on_its_line_array(elements: impl Iterator<Item = impl Into<Value
 pub enum PylockTomlErrorKind {
     #[error("Multiple active package entries found for `{0}`")]
     DuplicateActivePackage(PackageName),
+    #[error("Package entries for `{0}` may be active in the same environment")]
+    OverlappingPackages(PackageName),
+    #[error("Registry package `{0}` has no version")]
+    RegistryVersionMissing(PackageName),
     #[error(
         "Archive `{}` has size {actual}, but the lockfile records {expected}",
         path.display()
@@ -143,6 +147,8 @@ pub enum PylockTomlErrorKind {
     WheelNameMismatch(WheelFilename, PackageName),
     #[error("Wheel filename `{0}` does not match package version `{1}`")]
     WheelVersionMismatch(WheelFilename, Version),
+    #[error("Source distribution filename `{0}` does not match package version `{1}`")]
+    SdistVersionMismatch(SourceDistFilename, Version),
     #[error("Failed to convert path to URL")]
     PathToUrl,
     #[error(
@@ -1448,6 +1454,35 @@ impl<'lock> PylockToml {
 }
 
 impl PylockTomlPackage {
+    /// Return whether the package uses a non-registry source.
+    pub fn has_non_registry_source(&self) -> bool {
+        self.archive.is_some() || self.directory.is_some() || self.vcs.is_some()
+    }
+
+    /// Return every wheel and source distribution URL for a registry package.
+    ///
+    /// Return `None` for packages that use other source types, contain local paths, or have no
+    /// artifact URLs. The URLs still need to be checked against the registry's metadata.
+    pub fn registry_artifact_urls(&self) -> Option<Vec<&DisplaySafeUrl>> {
+        if self.has_non_registry_source() {
+            return None;
+        }
+
+        let urls = self
+            .sdist
+            .iter()
+            .map(|sdist| (&sdist.path, &sdist.url))
+            .chain(
+                self.wheels
+                    .iter()
+                    .flatten()
+                    .map(|wheel| (&wheel.path, &wheel.url)),
+            )
+            .map(|(path, url)| if path.is_some() { None } else { url.as_ref() })
+            .collect::<Option<Vec<_>>>()?;
+        if urls.is_empty() { None } else { Some(urls) }
+    }
+
     /// Convert the [`PylockTomlPackage`] to a TOML [`Table`].
     fn to_toml(&self) -> Result<Table, toml_edit::ser::Error> {
         let mut table = Table::new();

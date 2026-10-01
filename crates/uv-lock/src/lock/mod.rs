@@ -7342,7 +7342,7 @@ impl Package {
     }
 
     /// Returns `true` if the package contains the validation-only package metadata.
-    fn has_metadata(&self) -> bool {
+    pub(crate) fn has_metadata(&self) -> bool {
         self.metadata != PackageMetadata::default()
     }
 
@@ -7898,7 +7898,8 @@ impl Source {
     fn is_pypi_registry(&self) -> bool {
         matches!(
             self,
-            Self::Registry(RegistrySource::Url(url)) if url.as_ref() == PYPI_URL.as_str()
+            Self::Registry(RegistrySource::Url(url))
+                if url.as_ref().strip_suffix('/').unwrap_or(url.as_ref()) == PYPI_URL.as_str()
         )
     }
 
