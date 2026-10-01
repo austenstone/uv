@@ -26,7 +26,9 @@ uv-distribution-filename = { workspace = true }
 uv-distribution-types = { workspace = true }
 uv-errors = { workspace = true }
 uv-fs = { workspace = true }
+uv-install-wheel = { workspace = true }
 uv-lock = { workspace = true }
+uv-metadata = { workspace = true }
 uv-normalize = { workspace = true }
 uv-pep440 = { workspace = true }
 uv-pep508 = { workspace = true }
@@ -43,6 +45,8 @@ anyhow = { workspace = true }
 async-compression = { workspace = true }
 async_zip = { workspace = true }
 astral-tokio-tar = { workspace = true }
+base64 = { workspace = true }
+csv = { workspace = true }
 fs-err = { workspace = true, features = ["tokio"] }
 futures = { workspace = true }
 indoc = { workspace = true }
@@ -50,7 +54,9 @@ itertools = { workspace = true }
 owo-colors = { workspace = true }
 regex = { workspace = true }
 serde = { workspace = true }
+sha2 = { workspace = true }
 serde_json = { workspace = true }
+tar-codec = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
