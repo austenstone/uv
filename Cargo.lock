@@ -6312,6 +6312,7 @@ dependencies = [
  "uv-configuration",
  "uv-distribution-types",
  "uv-install-wheel",
+ "uv-lock",
  "uv-normalize",
  "uv-pep440",
  "uv-pep508",

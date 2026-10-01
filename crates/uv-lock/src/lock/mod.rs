@@ -7361,6 +7361,11 @@ impl Package {
         }
     }
 
+    /// Return the source-tree path for a directory, editable, or virtual package.
+    pub(crate) fn source_tree(&self) -> Option<&Path> {
+        self.id.source.as_source_tree()
+    }
+
     /// Returns all the hashes associated with this [`Package`].
     fn hashes(&self) -> HashDigests {
         let mut hashes = Vec::with_capacity(
@@ -7426,6 +7431,16 @@ impl Package {
     /// Returns the dependencies of the package.
     pub fn dependencies(&self) -> &[Dependency] {
         &self.dependencies
+    }
+
+    /// Return whether the package has a production dependency in every locked environment.
+    pub(crate) fn has_unconditional_dependencies(&self) -> bool {
+        self.dependencies.iter().any(|dependency| {
+            dependency
+                .simplified_marker
+                .as_simplified_marker_tree()
+                .is_true()
+        })
     }
 
     /// Returns all production, optional, and development dependencies of the [`Package`].

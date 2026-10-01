@@ -24,6 +24,7 @@ uv-client = { workspace = true }
 uv-configuration = { workspace = true, features = ["clap"] }
 uv-distribution-types = { workspace = true }
 uv-install-wheel = { workspace = true, features = ["clap"], default-features = false }
+uv-lock = { workspace = true }
 uv-normalize = { workspace = true }
 uv-pep440 = { workspace = true }
 uv-pep508 = { workspace = true }

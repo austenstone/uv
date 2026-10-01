@@ -1,5 +1,4 @@
 //! Commands for building Python distributions.
-
 use std::borrow::Cow;
 use std::fmt::Write as _;
 use std::io::Write as _;
@@ -798,12 +797,16 @@ async fn build_package(
         concurrency.downloads_semaphore.clone(),
     );
     let exported_lock = match &source.source {
-        Source::Directory(source_tree) => {
-            lock::export(source_tree, workspace.ok(), &database, preview)
-                .await
-                .map_err(Error::BuildLock)?
-                .map(Arc::new)
-        }
+        Source::Directory(source_tree) => lock::export(
+            source_tree,
+            workspace.ok(),
+            &database,
+            lock_settings,
+            preview,
+        )
+        .await
+        .map_err(Error::BuildLock)?
+        .map(Arc::new),
         Source::File(_) => None,
     };
 

@@ -4247,6 +4247,34 @@ impl BuildLockSettings {
     }
 }
 
+impl uv_lock::build::Settings for BuildLockSettings {
+    fn resolve(&self, root: &Path) -> Result<uv_lock::build::ResolvedSettings> {
+        let settings = Self::resolve(self, root)?;
+        Ok(uv_lock::build::ResolvedSettings {
+            sources: settings.sources,
+            index_locations: settings.index_locations,
+            has_dependency_metadata: settings.dependency_metadata.values().next().is_some(),
+        })
+    }
+
+    fn has_dependency_modifiers(&self, root: &Path) -> Result<bool> {
+        Ok(self.filesystem(root)?.is_some_and(|options| {
+            options
+                .constraint_dependencies
+                .as_ref()
+                .is_some_and(|requirements| !requirements.is_empty())
+                || options
+                    .override_dependencies
+                    .as_ref()
+                    .is_some_and(|requirements| !requirements.is_empty())
+                || options
+                    .exclude_dependencies
+                    .as_ref()
+                    .is_some_and(|requirements| !requirements.is_empty())
+        }))
+    }
+}
+
 impl BuildSettings {
     /// Resolve the [`BuildSettings`] from the CLI and filesystem configuration.
     pub fn resolve(
