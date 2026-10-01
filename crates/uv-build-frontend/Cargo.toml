@@ -41,6 +41,7 @@ uv-workspace = { workspace = true }
 anstream = { workspace = true }
 anyhow = { workspace = true }
 async-compression = { workspace = true }
+async_zip = { workspace = true }
 astral-tokio-tar = { workspace = true }
 fs-err = { workspace = true, features = ["tokio"] }
 futures = { workspace = true }
@@ -53,6 +54,7 @@ serde_json = { workspace = true }
 tempfile = { workspace = true }
 thiserror = { workspace = true }
 tokio = { workspace = true }
+tokio-util = { workspace = true }
 toml_edit = { workspace = true }
 tracing = { workspace = true }
 rustc-hash = { workspace = true }

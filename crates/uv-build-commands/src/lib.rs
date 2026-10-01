@@ -1045,6 +1045,20 @@ async fn build_package(
                     .await
                     .map_err(Error::BuildLock)?;
             }
+            let build_action = if exported_lock.is_some()
+                && !force_pep517
+                && check_direct_build(
+                    &extracted,
+                    uv_version::version(),
+                    &interpreter.to_resolver_marker_environment(),
+                    build_constraints.requirements().cloned().map(Into::into),
+                )
+                .is_ok()
+            {
+                BuildAction::DirectBuild
+            } else {
+                build_action
+            };
             let wheel_build = build_wheel(
                 &extracted,
                 output_dir,
