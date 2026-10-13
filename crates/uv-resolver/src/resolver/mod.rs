@@ -24,7 +24,7 @@ use uv_distribution::{ArchiveMetadata, DistributionDatabase};
 use uv_distribution_types::{
     BuiltDist, DerivationChain, Dist, DistErrorKind, Identifier, IndexCapabilities, IndexLocations,
     IndexMetadata, IndexUrl, InstalledDist, Name, RemoteSource, Requirement, RequiresPython,
-    ResolutionRecorder, ResolvedDist, SourceDist, VersionOrUrlRef,
+    ResolutionRecorder, ResolvedDist, SourceDist, VariantsJsonContent, VersionOrUrlRef,
 };
 use uv_git::GitResolver;
 use uv_normalize::PackageName;
@@ -35,7 +35,7 @@ use uv_pep508::{
 use uv_platform_tags::{IncompatibleTag, Tags};
 use uv_preview::PreviewFeature;
 use uv_pypi_types::{ConflictItem, ConflictItemRef, ConflictKindRef, Conflicts, VerbatimParsedUrl};
-use uv_resolver_types::PackageNodeKind;
+use uv_resolver_types::{PackageNodeKind, VariantsJsonMetadataError};
 use uv_static::EnvVars;
 use uv_torch::TorchStrategy;
 use uv_types::{BuildContext, HashStrategy, InstalledPackagesProvider};
@@ -73,6 +73,7 @@ use crate::resolver::environment::{
 };
 pub(crate) use crate::resolver::fork_map::{ForkMap, ForkSet};
 pub use crate::resolver::index::InMemoryIndex;
+use crate::resolver::index::VariantsJsonResponse;
 use crate::resolver::indexes::Indexes;
 use crate::resolver::package_source::PackageSource;
 pub use crate::resolver::provider::{
@@ -80,8 +81,8 @@ pub use crate::resolver::provider::{
     VersionsResponse, WheelMetadataResult,
 };
 pub use crate::resolver::reporter::Reporter;
-pub(crate) use crate::resolver::requests::RegisteredMetadata;
 use crate::resolver::requests::{MetadataRequest, MetadataRequests};
+pub(crate) use crate::resolver::requests::{RegisteredMetadata, RegisteredVariantsJson};
 use crate::resolver::requirements::{RequirementContext, RequirementExpander};
 use crate::resolver::system::SystemDependency;
 pub(crate) use crate::resolver::urls::Urls;
@@ -1706,7 +1707,7 @@ impl<InstalledPackages: InstalledPackagesProvider> ResolverState<InstalledPackag
             | CompatibleDist::IncompatibleWheel { sdist, .. } => Some(&sdist.index),
             CompatibleDist::CompatibleWheel { wheel, .. } => Some(&wheel.index),
         };
-        if let Some(index) = index
+        let variants_json = if let Some(index) = index
             && let Some(variants_json) = candidate.prioritized().and_then(|prioritized| {
                 prioritized
                     .variants_json()
@@ -1715,8 +1716,10 @@ impl<InstalledPackages: InstalledPackagesProvider> ResolverState<InstalledPackag
             })
             && uv_preview::is_enabled(PreviewFeature::WheelVariants)
         {
-            requests.enqueue_variants_json(variants_json)?;
-        }
+            Some(requests.request_variants_json(variants_json)?)
+        } else {
+            None
+        };
 
         let request = if matches!(&**package, PubGrubPackageInner::Package { .. })
             && self.dependency_mode.is_transitive()
@@ -1746,7 +1749,7 @@ impl<InstalledPackages: InstalledPackagesProvider> ResolverState<InstalledPackag
         } else {
             None
         };
-        pins.insert(candidate, dist, request)
+        pins.insert(candidate, dist, request, variants_json)
     }
 
     /// Check if the distribution is incompatible with the Python requirement, and if so, return
@@ -1780,6 +1783,29 @@ impl<InstalledPackages: InstalledPackagesProvider> ResolverState<InstalledPackag
             };
             Some((requires_python, incompatibility))
         }
+    }
+
+    /// Record why a candidate's metadata is unavailable and allow the resolver to backtrack.
+    fn unavailable_metadata(
+        &self,
+        name: &PackageName,
+        version: &Version,
+        reason: &MetadataUnavailable,
+    ) -> Dependencies {
+        let unavailable_version = UnavailableVersion::from(reason);
+        let message = unavailable_version.singular_message();
+        if let Some(err) = reason.source() {
+            warn!("{name} {message}: {err}");
+        } else {
+            warn!("{name} {message}");
+        }
+        let incomplete_packages = self.incomplete_packages.pin();
+        let versions = incomplete_packages.get_or_insert(
+            name.clone(),
+            HashMap::builder().resize_mode(ResizeMode::Blocking).build(),
+        );
+        versions.pin().insert(version.clone(), reason.clone());
+        Dependencies::Unavailable(unavailable_version)
     }
 
     /// Given a candidate package and version, return its dependencies.
@@ -1840,6 +1866,12 @@ impl<InstalledPackages: InstalledPackagesProvider> ResolverState<InstalledPackag
                 kind,
                 marker: _,
             } => {
+                if let Some(variants_json) = pins.variants_json(name, version)
+                    && let Err(reason) = &*variants_json.wait()
+                {
+                    return Ok(self.unavailable_metadata(name, version, reason));
+                }
+
                 // If we're excluding transitive dependencies, short-circuit.
                 if self.dependency_mode.is_direct() {
                     return Ok(Dependencies::Unforkable(Vec::default()));
@@ -1867,21 +1899,7 @@ impl<InstalledPackages: InstalledPackagesProvider> ResolverState<InstalledPackag
                 let metadata = match &*response {
                     MetadataResponse::Found(archive) => &archive.metadata,
                     MetadataResponse::Unavailable(reason) => {
-                        let unavailable_version = UnavailableVersion::from(reason);
-                        let message = unavailable_version.singular_message();
-                        if let Some(err) = reason.source() {
-                            // Show the detailed error for metadata parse errors.
-                            warn!("{name} {message}: {err}");
-                        } else {
-                            warn!("{name} {message}");
-                        }
-                        let incomplete_packages = self.incomplete_packages.pin();
-                        let versions = incomplete_packages.get_or_insert(
-                            name.clone(),
-                            HashMap::builder().resize_mode(ResizeMode::Blocking).build(),
-                        );
-                        versions.pin().insert(version.clone(), reason.clone());
-                        return Ok(Dependencies::Unavailable(unavailable_version));
+                        return Ok(self.unavailable_metadata(name, version, reason));
                     }
                     MetadataResponse::Error(dist, err) => {
                         let chain = DerivationChainBuilder::from_state(id, version, pubgrub)
@@ -2125,6 +2143,14 @@ impl<InstalledPackages: InstalledPackagesProvider> ResolverState<InstalledPackag
                     .boxed_local()
                     .await
                     .map_err(ResolveError::Client)?;
+                let contents = VariantsJsonContent::from_slice(&contents).map_err(|source| {
+                    MetadataUnavailable::InvalidVariantMetadata(Arc::new(
+                        VariantsJsonMetadataError {
+                            filename: variants_json.filename.clone(),
+                            source,
+                        },
+                    ))
+                });
                 Ok(Some(Response::VariantsJson {
                     variants_json,
                     contents,
@@ -3422,7 +3448,7 @@ enum Response {
     /// The contents of a variant metadata file.
     VariantsJson {
         variants_json: RegistryVariantsJson,
-        contents: Vec<u8>,
+        contents: VariantsJsonResponse,
     },
 }
 

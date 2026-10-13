@@ -1253,6 +1253,13 @@ impl PubGrubReportFormatter<'_> {
                                 reason: reason.to_string(),
                             });
                         }
+                        MetadataUnavailable::InvalidVariantMetadata(reason) => {
+                            hints.insert(PubGrubHint::InvalidVersionMetadata {
+                                package: name.clone(),
+                                version: version.clone(),
+                                reason: reason.to_string(),
+                            });
+                        }
                         MetadataUnavailable::InconsistentMetadata(reason) => {
                             hints.insert(PubGrubHint::InconsistentVersionMetadata {
                                 package: name.clone(),
