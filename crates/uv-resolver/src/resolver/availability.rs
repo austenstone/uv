@@ -189,7 +189,8 @@ impl From<&MetadataUnavailable> for UnavailableVersion {
     fn from(reason: &MetadataUnavailable) -> Self {
         match reason {
             MetadataUnavailable::Offline => Self::Offline,
-            MetadataUnavailable::InvalidMetadata(_) => Self::InvalidMetadata,
+            MetadataUnavailable::InvalidMetadata(_)
+            | MetadataUnavailable::InvalidVariantMetadata(_) => Self::InvalidMetadata,
             MetadataUnavailable::InconsistentMetadata(_) => Self::InconsistentMetadata,
             MetadataUnavailable::InvalidStructure(_) => Self::InvalidStructure,
             MetadataUnavailable::RequiresPython(requires_python, _python_version) => {
@@ -275,6 +276,9 @@ impl From<&MetadataUnavailable> for UnavailablePackage {
         match reason {
             MetadataUnavailable::Offline => Self::Offline,
             MetadataUnavailable::InvalidMetadata(err) => {
+                Self::InvalidMetadata(UnavailableErrorChain(err.clone()))
+            }
+            MetadataUnavailable::InvalidVariantMetadata(err) => {
                 Self::InvalidMetadata(UnavailableErrorChain(err.clone()))
             }
             MetadataUnavailable::InconsistentMetadata(err) => {
