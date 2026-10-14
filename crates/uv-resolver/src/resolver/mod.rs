@@ -19,7 +19,7 @@ use tokio::sync::oneshot;
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::{Level, debug, info, instrument, trace, warn};
 
-use uv_configuration::{Constraints, DependencyModifiers};
+use uv_configuration::{Constraints, DependencyModifiers, IndexStrategy};
 use uv_distribution::{ArchiveMetadata, DistributionDatabase};
 use uv_distribution_types::{
     BuiltDist, DerivationChain, Dist, DistErrorKind, Identifier, IndexCapabilities, IndexLocations,
@@ -41,7 +41,7 @@ use uv_torch::TorchStrategy;
 use uv_types::{BuildContext, HashStrategy, InstalledPackagesProvider};
 use uv_warnings::warn_user_once;
 
-use crate::candidate_selector::{Candidate, CandidateDist, CandidateSelector};
+use crate::candidate_selector::{Candidate, CandidateDist, CandidateSelector, VersionChoiceKind};
 use crate::dependency_provider::UvDependencyProvider;
 use crate::error::{NoSolutionError, ResolveError, derivation_tree_packages};
 use crate::fork_indexes::ForkIndexes;
@@ -1351,6 +1351,83 @@ impl<InstalledPackages: InstalledPackagesProvider> ResolverState<InstalledPackag
             return Ok(None);
         };
 
+        // Variant properties are scoped to the source that provided the wheel. Only specific
+        // resolutions can select variants until lockfiles can record their metadata.
+        let variant_prioritized = if env.marker_environment().is_some()
+            && uv_preview::is_enabled(PreviewFeature::WheelVariants)
+            && let Some(prioritized) = candidate.prioritized()
+        {
+            // With unsafe-best-match, an earlier index may have been skipped because its only
+            // wheel was an unverified variant. Check it before accepting a later index's wheel.
+            let mut candidates = Vec::new();
+            let consider_earlier_indexes = match candidate.choice_kind() {
+                VersionChoiceKind::Compatible => {
+                    self.selector.index_strategy() == &IndexStrategy::UnsafeBestMatch
+                }
+                VersionChoiceKind::Preference | VersionChoiceKind::Installed => false,
+            };
+            if consider_earlier_indexes {
+                for version_map in version_maps {
+                    let Some(earlier) = version_map.get(candidate.version()) else {
+                        continue;
+                    };
+                    if std::ptr::eq(earlier, prioritized) {
+                        break;
+                    }
+                    if earlier.get().is_none() {
+                        candidates.push(earlier);
+                    }
+                }
+            }
+            candidates.push(prioritized);
+
+            let mut variant_prioritized = None;
+            for candidate_dist in candidates {
+                let mut responses = Vec::new();
+                for variants_json in candidate_dist.variants_json() {
+                    if candidate_dist.has_unverified_variants(&variants_json.index) {
+                        responses.push((
+                            variants_json.index.clone(),
+                            requests.request_variants_json(variants_json)?.wait(),
+                        ));
+                    }
+                }
+                let metadata = responses
+                    .iter()
+                    .filter_map(|(index, response)| {
+                        response
+                            .as_ref()
+                            .as_ref()
+                            .ok()
+                            .map(|metadata| (index.clone(), metadata))
+                    })
+                    .collect::<Vec<_>>();
+                variant_prioritized = candidate_dist.prioritize_variants(&metadata);
+                if variant_prioritized.is_some() {
+                    break;
+                }
+                if std::ptr::eq(candidate_dist, prioritized)
+                    && candidate.compatible().is_none()
+                    && let Some(reason) = responses
+                        .iter()
+                        .find_map(|(_, response)| response.as_ref().as_ref().err())
+                {
+                    return Ok(Some(ResolverVersion::Unavailable(
+                        candidate.version().clone(),
+                        self.record_unavailable_metadata(name, candidate.version(), reason),
+                    )));
+                }
+            }
+            variant_prioritized
+        } else {
+            None
+        };
+        let candidate = if let Some(prioritized) = &variant_prioritized {
+            candidate.with_prioritized_dist(prioritized)
+        } else {
+            candidate
+        };
+
         let dist = match candidate.dist() {
             CandidateDist::Compatible(dist) => dist,
             CandidateDist::Incompatible {
@@ -1792,6 +1869,15 @@ impl<InstalledPackages: InstalledPackagesProvider> ResolverState<InstalledPackag
         version: &Version,
         reason: &MetadataUnavailable,
     ) -> Dependencies {
+        Dependencies::Unavailable(self.record_unavailable_metadata(name, version, reason))
+    }
+
+    fn record_unavailable_metadata(
+        &self,
+        name: &PackageName,
+        version: &Version,
+        reason: &MetadataUnavailable,
+    ) -> UnavailableVersion {
         let unavailable_version = UnavailableVersion::from(reason);
         let message = unavailable_version.singular_message();
         if let Some(err) = reason.source() {
@@ -1805,7 +1891,7 @@ impl<InstalledPackages: InstalledPackagesProvider> ResolverState<InstalledPackag
             HashMap::builder().resize_mode(ResizeMode::Blocking).build(),
         );
         versions.pin().insert(version.clone(), reason.clone());
-        Dependencies::Unavailable(unavailable_version)
+        unavailable_version
     }
 
     /// Given a candidate package and version, return its dependencies.
