@@ -1,3 +1,4 @@
+use std::cmp::Reverse;
 use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
@@ -25,6 +26,16 @@ pub enum VariantsJsonParseError {
 
 /// Variant properties, grouped by namespace and feature.
 type VariantProperties = BTreeMap<VariantNamespace, BTreeMap<VariantFeature, Vec<VariantValue>>>;
+
+/// Compatible features and values by namespace, ordered from most to least preferred.
+pub type VariantPreferences = BTreeMap<String, Vec<(String, Vec<String>)>>;
+
+/// The priority of a compatible variant. Higher scores are preferred.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct VariantScore {
+    properties: Vec<Reverse<(usize, usize, usize)>>,
+    label: Reverse<VariantLabel>,
+}
 
 /// Index-level metadata for wheel variants, as defined by PEP 825.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -56,6 +67,44 @@ impl VariantsJsonContent {
                     })
                 })
             })
+        })
+    }
+
+    /// Score a variant using the target's ordered compatible features and values.
+    ///
+    /// Returns `None` if the label is missing or any of its features is unsupported.
+    pub fn score_variant(
+        &self,
+        label: &VariantLabel,
+        preferences: &VariantPreferences,
+    ) -> Option<VariantScore> {
+        let mut properties = Vec::new();
+        for (namespace, features) in self.variants.get(label)? {
+            let namespace_priority = self
+                .default_priorities
+                .namespace
+                .iter()
+                .position(|name| name == namespace)?;
+            let supported = preferences.get(&namespace.0)?;
+            for (feature, values) in features {
+                let (feature_priority, (_, supported_values)) = supported
+                    .iter()
+                    .enumerate()
+                    .find(|(_, (name, _))| name == &feature.0)?;
+                let value_priority = supported_values
+                    .iter()
+                    .position(|value| values.iter().any(|candidate| &candidate.0 == value))?;
+                properties.push(Reverse((
+                    namespace_priority,
+                    feature_priority,
+                    value_priority,
+                )));
+            }
+        }
+        properties.sort_unstable_by(|left, right| right.cmp(left));
+        Some(VariantScore {
+            properties,
+            label: Reverse(label.clone()),
         })
     }
 

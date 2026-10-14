@@ -1,5 +1,3 @@
-use std::cmp::Reverse;
-use std::collections::HashSet;
 use std::fmt::{Display, Formatter};
 
 use arcstr::ArcStr;
@@ -9,7 +7,8 @@ use tracing::debug;
 use uv_distribution_filename::{BuildTag, WheelFilename};
 use uv_distribution_types::{
     File, IndexUrl, InstalledDist, MinimumLibcVersion, Name, RegistryBuiltDist, RegistryBuiltWheel,
-    RegistrySourceDist, RequiresPython, VariantsJsonContent, VariantsJsonFilename,
+    RegistrySourceDist, RequiresPython, VariantPreferences, VariantsJsonContent,
+    VariantsJsonFilename,
 };
 use uv_normalize::PackageName;
 use uv_pep440::{Version, VersionSpecifier, VersionSpecifiers};
@@ -432,13 +431,15 @@ impl PrioritizedDist {
         &self,
         metadata: &[(IndexUrl, &VariantsJsonContent)],
     ) -> Option<Self> {
+        // Without target feature information, only variants without properties are compatible.
+        let preferences = VariantPreferences::default();
         let mut prioritized = self.clone();
         let mut found_variant = false;
         for (wheel, compatibility) in &mut prioritized.0.wheels {
             if let WheelCompatibility::Variant(hash, priority, build_tag) = compatibility
                 && let Some(label) = wheel.filename.variant()
                 && metadata.iter().any(|(index, metadata)| {
-                    index == &wheel.index && metadata.is_compatible(label, &HashSet::new())
+                    index == &wheel.index && metadata.score_variant(label, &preferences).is_some()
                 })
             {
                 *compatibility =
@@ -464,8 +465,15 @@ impl PrioritizedDist {
                     index,
                     (
                         hash,
-                        wheel.filename.variant().is_some(),
-                        Reverse(wheel.filename.variant()),
+                        wheel.filename.variant().and_then(|label| {
+                            metadata
+                                .iter()
+                                .filter(|(index, _)| index == &wheel.index)
+                                .filter_map(|(_, metadata)| {
+                                    metadata.score_variant(label, &preferences)
+                                })
+                                .max()
+                        }),
                         priority,
                         build_tag,
                     ),
